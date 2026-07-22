@@ -1,0 +1,1810 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  COUNSELOR
+  DOCUMENT_VERIFIER
+  STUDENT
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum StudentStatus {
+  REGISTERED
+  PROFILE_INCOMPLETE
+  DOCUMENTS_PENDING
+  DOCUMENTS_APPROVED
+  PSYCHOMETRIC_ASSIGNED
+  PSYCHOMETRIC_COMPLETED
+  COUNSELING_IN_PROGRESS
+  APPLICATIONS_STARTED
+  APPLICATIONS_SUBMITTED
+  OFFER_RECEIVED
+  VISA_PROCESSING
+  VISA_APPROVED
+  ENROLLED
+  CLOSED
+}
+
+enum ApplicationStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  OFFER_RECEIVED
+  OFFER_ACCEPTED
+  OFFER_DECLINED
+  VISA_PROCESSING
+  VISA_APPROVED
+  VISA_REJECTED
+  ENROLLED
+  REJECTED
+}
+
+enum DocumentStatus {
+  PENDING
+  PROCESSING
+  APPROVED
+  REJECTED
+  NEEDS_CORRECTION
+  ARCHIVED
+}
+
+enum DocumentType {
+  PASSPORT
+  ID_DOCUMENT
+  TRANSCRIPTS
+  SOP
+  RESUME
+  LOR
+  CLASS_10
+  CLASS_12
+  GRADUATION
+  CERTIFICATE
+  ACHIEVEMENT
+  FINANCIAL_STATEMENT
+  LOAN_DOCUMENT
+  IELTS
+  TOEFL
+  PTE
+  GRE
+  GMAT
+  SAT
+  OTHER
+}
+
+enum PsychometricStatus {
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  EXPIRED
+}
+
+enum NotificationType {
+  DOCUMENT_UPDATE
+  TEST_ASSIGNMENT
+  SUBSCRIPTION_EXPIRY
+  APPLICATION_UPDATE
+  STUDENT_APP_STATUS_CHANGE
+  TASK_ASSIGNED
+  MEETING_SCHEDULED
+  CALL_LOGGED
+  SYSTEM_ALERT
+  DEADLINE_REMINDER
+  RECOMMENDATION
+  GENERAL
+}
+
+enum EducationLevel {
+  CLASS_10
+  CLASS_12
+  UNDERGRADUATE
+  POSTGRADUATE
+  DIPLOMA
+  OTHER
+}
+
+enum RecommendationCategory {
+  DREAM
+  BEST_FIT
+  SAFE
+  SCHOLARSHIP
+  ROI
+}
+
+// ============================================================
+// PART 3 — Phase 1: Identity Domain
+// ============================================================
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  rolePermissions RolePermission[]
+  users           User[]
+
+  @@index([name])
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  module      String
+  createdAt   DateTime @default(now())
+
+  rolePermissions RolePermission[]
+
+  @@index([module])
+  @@index([name])
+}
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now())
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+}
+
+// ============================================================
+// PART 3 — Phase 2: Organization Domain
+// ============================================================
+
+model Organization {
+  id         String    @id @default(uuid())
+  name       String
+  slug       String    @unique
+  logo       String?
+  brandColor String?
+  colors     Json?
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  subscriptionStart DateTime?
+  subscriptionEnd   DateTime?
+  plan              String    @default("TRIAL")
+
+  users     User[]
+  students  Student[]
+  auditLogs AuditLog[]
+}
+
+// ============================================================
+// PART 3 — Identity Domain (User + Auth)
+// ============================================================
+
+model User {
+  id             String       @id @default(uuid())
+  email          String       @unique
+  username       String?      @unique
+  passwordHash   String
+  fullName       String
+  role           UserRole
+  roleId         String?
+  roleRef        Role?        @relation(fields: [roleId], references: [id])
+  isActive       Boolean      @default(true)
+  status         UserStatus   @default(ACTIVE)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  lastLoginAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
+
+  refreshTokens          RefreshToken[]
+  auditLogs              AuditLog[]
+  createdNotes           Note[]                  @relation("NoteAuthor")
+  assignedNotes          Note[]                  @relation("NoteAssignee")
+  counseledStudents      Student[]               @relation("StudentCounselor")
+  aiConversations        AIConversation[]
+  notifications          Notification[]
+  notificationPreference NotificationPreference?
+  uploadedDocuments      Document[]              @relation("DocumentUploader")
+  documentVersions       DocumentVersion[]       @relation("DocumentVersionUploader")
+  documentComments       DocumentComment[]
+  assignedApplications   Application[]           @relation("ApplicationCounselor")
+  createdTasks           Task[]                  @relation("TaskAssigner")
+  assignedTasks          Task[]                  @relation("TaskAssignee")
+  organizedMeetings      Meeting[]
+  loggedCalls            Call[]
+  createdFollowUps       FollowUp[]              @relation("FollowUpCreator")
+  assignedFollowUps      FollowUp[]              @relation("FollowUpAssignee")
+
+  @@index([organizationId])
+  @@index([email])
+  @@index([role])
+  @@index([roleId])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+// ============================================================
+// PART 3 — Phase 3: Student Domain
+// ============================================================
+
+model Student {
+  id             String        @id @default(uuid())
+  userId         String        @unique
+  fullName       String
+  email          String        @unique
+  mobile         String?
+  dateOfBirth    DateTime?
+  gender         String?
+  address        String?
+  country        String?
+  status         StudentStatus @default(REGISTERED)
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  counselorId    String?
+  counselor      User?         @relation("StudentCounselor", fields: [counselorId], references: [id])
+
+  // Inline education fields (kept for backward compat until EducationRecord migration)
+  tenthSchool          String?
+  tenthBoard           String?
+  tenthPercentage      Float?
+  tenthYear            Int?
+  twelfthSchool        String?
+  twelfthBoard         String?
+  twelfthPercentage    Float?
+  twelfthYear          Int?
+  graduationDegree     String?
+  graduationUniversity String?
+  graduationPercentage Float?
+  graduationYear       Int?
+
+  interests String[]
+  hobbies   String[]
+
+  // Part 3 — FK preference references
+  preferredCountryId     String?
+  preferredCountryRef    Country?    @relation("StudentPreferredCountry", fields: [preferredCountryId], references: [id])
+  preferredUniversityId  String?
+  preferredUniversityRef University? @relation("StudentPreferredUniversity", fields: [preferredUniversityId], references: [id])
+  preferredCourseId      String?
+  preferredCourseRef     Course?     @relation("StudentPreferredCourse", fields: [preferredCourseId], references: [id])
+
+  // Legacy preference fields (kept for backward compat)
+  preferredCountry    String?
+  preferredUniversity String?
+  preferredCourse     String?
+
+  budgetMin Float?
+  budgetMax Float?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  studentInterests          StudentInterest[]
+  studyOptions              PreferredStudyOption[]
+  educationRecords          EducationRecord[]
+  examScores                StudentExamScore[]
+  entranceExams             EntranceExam[]
+  psychometricTests         PsychometricAssignment[]
+  careerAssessments         CareerAssessment[]
+  documents                 Document[]
+  documentChunks            DocumentChunk[]
+  applications              Application[]
+  notifications             Notification[]
+  notes                     Note[]
+  activities                Activity[]
+  recommendations           Recommendation[]
+  universityRecommendations UniversityRecommendation[]
+  auditLogs                 AuditLog[]
+  assessmentAttempts        AssessmentAttempt[]
+  careerAssessmentSessions  CareerAssessmentSession[]
+  tasks                     Task[]
+  meetings                  Meeting[]
+  calls                     Call[]
+  followUps                 FollowUp[]
+
+  @@index([organizationId])
+  @@index([email])
+  @@index([status])
+  @@index([preferredCountryId])
+  @@index([preferredUniversityId])
+}
+
+model EducationRecord {
+  id          String         @id @default(uuid())
+  studentId   String
+  student     Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  level       EducationLevel
+  institution String?
+  board       String?
+  field       String?
+  percentage  Float?
+  cgpa        Float?
+  scale       Float?
+  passingYear Int?
+  startYear   Int?
+  endYear     Int?
+  isCompleted Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([studentId])
+  @@index([level])
+}
+
+model StudentInterest {
+  id        String   @id @default(uuid())
+  studentId String
+  student   Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  interest  String
+  category  String?
+  createdAt DateTime @default(now())
+
+  @@unique([studentId, interest])
+  @@index([studentId])
+}
+
+model PreferredStudyOption {
+  id          String   @id @default(uuid())
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  type        String // COUNTRY | UNIVERSITY | COURSE
+  referenceId String?
+  label       String
+  priority    Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([studentId])
+  @@index([type])
+}
+
+// ============================================================
+// PART 3 — Exam Domain
+// ============================================================
+
+model ExamType {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  code        String   @unique
+  description String?
+  minScore    Float?
+  maxScore    Float?
+  scoreUnit   String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  studentScores StudentExamScore[]
+
+  @@index([code])
+}
+
+model StudentExamScore {
+  id         String    @id @default(uuid())
+  studentId  String
+  student    Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  examTypeId String
+  examType   ExamType  @relation(fields: [examTypeId], references: [id])
+  score      String?
+  bandScore  Float?
+  dateTaken  DateTime?
+  attempt    Int       @default(1)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([studentId, examTypeId, attempt])
+  @@index([studentId])
+  @@index([examTypeId])
+}
+
+model EntranceExam {
+  id        String    @id @default(uuid())
+  studentId String
+  student   Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  examType  String
+  score     String?
+  dateTaken DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([studentId])
+}
+
+// ============================================================
+// PART 3 — Phase 4: University Domain
+// ============================================================
+
+model Country {
+  id                      String   @id @default(uuid())
+  name                    String   @unique
+  code                    String   @unique
+  flagUrl                 String?
+  description             String?
+  overview                String?
+  region                  String?
+  educationSystem         String?
+  popularLevels           String[]
+  popularCourses          String[]
+  intakePeriods           String[]
+  visaInfo                String?
+  studentVisaProcess      String?
+  visaDocuments           Json?
+  visaTimeline            String?
+  workOpportunities       String?
+  prOpportunities         String?
+  culture                 String?
+  livingCost              Float?
+  costOfLivingRanking     Int?
+  educationQualityRanking Int?
+  healthInsurance         String?
+  accommodationTypes      Json?
+  currency                String?
+  language                String?
+  roadmap                 Json?
+  faq                     Json?
+  status                  String   @default("PUBLISHED")
+  normalizedName          String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  universities         University[]
+  courses              Course[]
+  scholarships         Scholarship[]
+  countryScholarships  CountryScholarship[]
+  faqs                 CountryFAQ[]
+  visaProcesses        VisaProcess[]
+  visaDocumentsReq     VisaDocument[]
+  workOpportunitiesRef WorkOpportunity[]
+  prPathways           PRPathway[]
+  visaRejectionReasons VisaRejectionReason[]
+  studentPreferences   Student[]             @relation("StudentPreferredCountry")
+
+  @@index([name])
+  @@index([code])
+  @@index([status])
+  @@index([region])
+}
+
+model CountryFAQ {
+  id        String   @id @default(uuid())
+  countryId String
+  country   Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  question  String
+  answer    String
+  order     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([countryId])
+}
+
+model CountryScholarship {
+  id                 String    @id @default(uuid())
+  countryId          String
+  country            Country   @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  name               String
+  description        String?
+  eligibility        String?
+  amount             Float?
+  currency           String?
+  deadline           DateTime?
+  applicationProcess String?
+  isActive           Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([countryId])
+}
+
+model VisaProcess {
+  id                  String   @id @default(uuid())
+  countryId           String
+  country             Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  visaType            String // STUDENT | TOURIST | WORK | DEPENDENT
+  name                String
+  description         String?
+  process             String?
+  timeline            String?
+  fees                String?
+  validity            String?
+  processingTime      String?
+  applicationMethod   String?
+  interviewRequired   Boolean  @default(false)
+  biometricsRequired  Boolean  @default(false)
+  healthInsurance     Boolean  @default(false)
+  financialProof      Boolean  @default(true)
+  englishRequired     Boolean  @default(true)
+  extensionsAvailable Boolean  @default(false)
+  extendsTo           String?
+  workAllowed         Boolean  @default(false)
+  workHours           String?
+  postStudyWork       String?
+  dependentAllowed    Boolean  @default(false)
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([countryId])
+  @@index([visaType])
+}
+
+model VisaDocument {
+  id          String   @id @default(uuid())
+  countryId   String
+  country     Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  visaType    String // STUDENT | TOURIST | WORK | DEPENDENT | ALL
+  name        String
+  description String?
+  isMandatory Boolean  @default(true)
+  format      String? // PDF | JPG | BOTH | ORIGINAL
+  notes       String?
+  order       Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([countryId])
+  @@index([visaType])
+}
+
+model WorkOpportunity {
+  id                 String   @id @default(uuid())
+  countryId          String
+  country            Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  name               String
+  description        String?
+  duration           String?
+  eligibility        String?
+  applicationProcess String?
+  salaryRange        String?
+  workRights         String?
+  pathwayToPR        Boolean  @default(false)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([countryId])
+}
+
+model PRPathway {
+  id                 String   @id @default(uuid())
+  countryId          String
+  country            Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  name               String
+  description        String?
+  eligibility        String?
+  process            String?
+  timeline           String?
+  pointsBased        Boolean  @default(false)
+  minPoints          Int?
+  minWorkExperience  Int?
+  languageRequired   String?
+  investmentRequired Float?
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([countryId])
+}
+
+model VisaRejectionReason {
+  id          String   @id @default(uuid())
+  countryId   String
+  country     Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  reason      String
+  description String?
+  solution    String?
+  frequency   String? // COMMON | MODERATE | RARE
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([countryId])
+}
+
+enum UniversityType {
+  CENTRAL
+  STATE
+  DEEMED
+  PRIVATE
+  AUTONOMOUS
+  INSTITUTE_OF_NATIONAL_IMPORTANCE
+}
+
+model University {
+  id                    String          @id @default(uuid())
+  name                  String
+  countryId             String
+  country               Country         @relation(fields: [countryId], references: [id])
+  city                  String?
+  state                 String?
+  description           String?
+  website               String?
+  universityType        UniversityType?
+  ranking               Int?
+  rankingSource         String?
+  intakePeriods         String[]
+  applicationFee        Float?
+  logoUrl               String?
+  accreditation         Json?
+  eligibility           Json?
+  admissionRequirements Json?
+  feeStructure          Json?
+  applicationProcess    Json?
+  deadlines             Json?
+  isActive              Boolean         @default(true)
+  status                String          @default("PUBLISHED")
+  visibility            String          @default("GLOBAL")
+  normalizedName        String?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  deletedAt             DateTime?
+
+  courses            Course[]
+  scholarships       Scholarship[]
+  applications       Application[]
+  images             UniversityImage[]
+  documents          UniversityDocument[]
+  rankings           Ranking[]
+  recommendations    UniversityRecommendation[]
+  studentPreferences Student[]                  @relation("StudentPreferredUniversity")
+  universityCourses  UniversityCourse[]
+
+  @@index([countryId])
+  @@index([name])
+  @@index([ranking])
+  @@index([status])
+  @@index([visibility])
+}
+
+model UniversityImage {
+  id           String     @id @default(uuid())
+  universityId String
+  university   University @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  storagePath  String
+  url          String
+  altText      String?
+  type         String     @default("GALLERY")
+  width        Int?
+  height       Int?
+  fileSize     Int?
+  isPrimary    Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+
+  @@index([universityId])
+  @@index([type])
+}
+
+model UniversityDocument {
+  id           String     @id @default(uuid())
+  universityId String
+  university   University @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  title        String
+  description  String?
+  storagePath  String
+  url          String
+  fileType     String
+  fileSize     Int?
+  documentType String     @default("BROCHURE")
+  language     String?
+  isPublic     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([universityId])
+  @@index([documentType])
+}
+
+model Ranking {
+  id           String     @id @default(uuid())
+  universityId String
+  university   University @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  source       String // QS, THE, ARWU, NIRF
+  rank         Int
+  score        Float?
+  year         Int
+  createdAt    DateTime   @default(now())
+
+  @@unique([universityId, source, year])
+  @@index([universityId])
+  @@index([source])
+  @@index([year])
+}
+
+// ============================================================
+// PART 3 — Phase 5: Course Domain
+// ============================================================
+
+model CourseCategory {
+  id          String           @id @default(uuid())
+  name        String           @unique
+  slug        String           @unique
+  description String?
+  parentId    String?
+  parent      CourseCategory?  @relation("CategoryParent", fields: [parentId], references: [id])
+  children    CourseCategory[] @relation("CategoryParent")
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  courses Course[]
+
+  @@index([slug])
+  @@index([parentId])
+}
+
+model Course {
+  id            String          @id @default(uuid())
+  name          String
+  code          String?
+  level         String // BACHELOR | MASTER | PHD | CERTIFICATION
+  category      String
+  categoryId    String?
+  categoryRef   CourseCategory? @relation(fields: [categoryId], references: [id])
+  description   String?
+  duration      String?
+  skills        String[]
+  tuitionFeeMin Float?
+  tuitionFeeMax Float?
+  currency      String?
+  countryId     String
+  country       Country         @relation(fields: [countryId], references: [id])
+  universityId  String?
+  university    University?     @relation(fields: [universityId], references: [id])
+
+  // Part 10 — Course lifecycle
+  status               String   @default("PUBLISHED") // DRAFT | PENDING_REVIEW | PUBLISHED | DISABLED
+  eligibility          Json? // eligibility rules, prerequisites
+  requirements         Json? // entrance requirements, language requirements
+  careerOutcomes       Json? // salary trends, future scope, career paths
+  popularIn            String[] // country IDs where this course is popular
+  entranceExams        String[] // required exams: GRE, GMAT, IELTS, etc.
+  languageRequirements Json?
+  normalizedName       String?
+  importSource         String? // CSV | MANUAL | API
+  importId             String? // reference to import batch
+  aiGenerated          Boolean  @default(false)
+  aiApproved           Boolean  @default(false)
+
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  careers            Career[]           @relation("CourseCareer")
+  scholarships       Scholarship[]
+  applications       Application[]
+  studentPreferences Student[]          @relation("StudentPreferredCourse")
+  universityCourses  UniversityCourse[]
+
+  @@index([countryId])
+  @@index([universityId])
+  @@index([category])
+  @@index([level])
+  @@index([categoryId])
+  @@index([status])
+  @@index([normalizedName])
+}
+
+model UniversityCourse {
+  id           String     @id @default(uuid())
+  universityId String
+  university   University @relation(fields: [universityId], references: [id], onDelete: Cascade)
+  courseId     String
+  course       Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  fees         Json?
+  eligibility  Json?
+  requirements Json?
+  intakeMonths String[]
+  duration     String?
+  language     String?
+  campus       String?
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([universityId, courseId])
+  @@index([universityId])
+  @@index([courseId])
+}
+
+// ============================================================
+// PART 3 — Phase 6: Career Domain
+// ============================================================
+
+model CareerCategory {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  careers Career[]
+
+  @@index([slug])
+}
+
+model Career {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  description  String?
+  skills       String[]
+  eligibility  String?
+  futureScope  String?
+  salaryTrends Json?
+  recruiters   String[]
+  roadmap      Json?
+  isEmerging   Boolean  @default(false)
+  isActive     Boolean  @default(true)
+
+  // Part 11 — Enhanced fields
+  categoryId         String?
+  categoryRef        CareerCategory? @relation(fields: [categoryId], references: [id])
+  status             String          @default("PUBLISHED") // DRAFT | PENDING_REVIEW | PUBLISHED | DISABLED
+  industry           String?
+  minEducation       String?
+  recommendedDegrees String[]
+  normalizedName     String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  courses             Course[]                   @relation("CourseCareer")
+  psychometricMatches PsychometricMatch[]
+  assessmentQuestions CareerAssessmentQuestion[] @relation("QuestionCareer")
+
+  @@index([name])
+  @@index([categoryId])
+  @@index([status])
+}
+
+// Part 11 — Career Assessment
+model CareerAssessmentQuestion {
+  id             String   @id @default(uuid())
+  category       String? // INTEREST | PERSONALITY | APTITUDE | SKILLS
+  questionText   String
+  questionType   String   @default("MCQ") // MCQ | RATING | TEXT
+  options        Json? // for MCQ: [{label, value}]
+  careerCategory String? // filter by career category
+  careerId       String?
+  career         Career?  @relation("QuestionCareer", fields: [careerId], references: [id])
+  order          Int      @default(0)
+  weight         Float    @default(1.0)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([category])
+  @@index([careerId])
+}
+
+model CareerAssessmentSession {
+  id          String    @id @default(uuid())
+  studentId   String
+  student     Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  status      String    @default("IN_PROGRESS") // IN_PROGRESS | COMPLETED
+  responses   Json? // [{questionId, answer}]
+  scores      Json? // {interest: 80, personality: 65, ...}
+  result      Json? // {matches: [{career, score}], strengths, weaknesses}
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([studentId])
+  @@index([status])
+}
+
+// ============================================================
+// PART 3 — Phase 7: Assessment Domain
+// ============================================================
+
+model PsychometricVendor {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  apiDetails  Json?
+  website     String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assessments Assessment[]
+
+  @@index([name])
+}
+
+model Assessment {
+  id          String              @id @default(uuid())
+  name        String
+  type        String // PSYCHOMETRIC | APTITUDE | SKILL | PERSONALITY
+  vendorId    String?
+  vendor      PsychometricVendor? @relation(fields: [vendorId], references: [id])
+  description String?
+  duration    Int? // minutes
+  isActive    Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  deletedAt   DateTime?
+
+  questions AssessmentQuestion[]
+  attempts  AssessmentAttempt[]
+
+  @@index([type])
+  @@index([vendorId])
+}
+
+model AssessmentQuestion {
+  id            String     @id @default(uuid())
+  assessmentId  String
+  assessment    Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  questionText  String
+  questionType  String // MCQ | TEXT | SCALE | LIKERT
+  options       Json?
+  correctAnswer String?
+  category      String?
+  difficulty    Int?       @default(1)
+  weight        Float      @default(1.0)
+  order         Int
+  isLicensed    Boolean    @default(false)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([assessmentId])
+  @@index([category])
+}
+
+model AssessmentAttempt {
+  id           String             @id @default(uuid())
+  assessmentId String
+  assessment   Assessment         @relation(fields: [assessmentId], references: [id])
+  studentId    String
+  student      Student            @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  status       PsychometricStatus @default(ASSIGNED)
+  responses    Json?
+  score        Json?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  expiresAt    DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  reports AssessmentReport[]
+
+  @@index([assessmentId])
+  @@index([studentId])
+  @@index([status])
+}
+
+model AssessmentReport {
+  id              String            @id @default(uuid())
+  attemptId       String
+  attempt         AssessmentAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  summary         String?
+  scores          Json?
+  strengths       String[]
+  weaknesses      String[]
+  recommendations String[]
+  careerMatches   String[]
+  pdfUrl          String?
+  createdAt       DateTime          @default(now())
+
+  @@index([attemptId])
+}
+
+// ============================================================
+// Legacy Psychometric Models (kept for backward compat)
+// ============================================================
+
+model PsychometricTest {
+  id            String    @id @default(uuid())
+  title         String
+  description   String?
+  type          String
+  timeLimit     Int?
+  instructions  String?
+  scoringConfig Json? // { rules: [{category, weight}], passingScore }
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  sections    TestSection[]
+  questions   PsychometricQuestion[]
+  assignments PsychometricAssignment[]
+  matches     PsychometricMatch[]
+
+  @@index([type])
+}
+
+model TestSection {
+  id          String           @id @default(uuid())
+  testId      String
+  test        PsychometricTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  order       Int              @default(0)
+  timeLimit   Int? // minutes for this section
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  questions PsychometricQuestion[] @relation("SectionQuestions")
+
+  @@index([testId])
+  @@index([order])
+}
+
+model PsychometricQuestion {
+  id            String           @id @default(uuid())
+  testId        String
+  test          PsychometricTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+  sectionId     String?
+  section       TestSection?     @relation("SectionQuestions", fields: [sectionId], references: [id])
+  question      String
+  options       Json
+  correctAnswer String?
+  scoringRule   String? // CORRECT_ANSWER | RATING_SCALE | CATEGORY_MATCH
+  category      String
+  weight        Float            @default(1.0)
+  order         Int
+  isLicensed    Boolean          @default(false)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([testId])
+  @@index([sectionId])
+}
+
+model PsychometricAssignment {
+  id          String             @id @default(uuid())
+  testId      String
+  test        PsychometricTest   @relation(fields: [testId], references: [id])
+  studentId   String
+  student     Student            @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  status      PsychometricStatus @default(ASSIGNED)
+  score       Json?
+  startedAt   DateTime?
+  completedAt DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@index([testId])
+  @@index([studentId])
+  @@index([status])
+}
+
+model PsychometricMatch {
+  id       String           @id @default(uuid())
+  testId   String
+  test     PsychometricTest @relation(fields: [testId], references: [id])
+  careerId String
+  career   Career           @relation(fields: [careerId], references: [id])
+  minScore Float
+  maxScore Float
+  weight   Float            @default(1.0)
+
+  @@index([testId])
+  @@index([careerId])
+}
+
+model CareerAssessment {
+  id            String   @id @default(uuid())
+  studentId     String
+  student       Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  type          String
+  scores        Json
+  result        Json?
+  careerMatches String[]
+  strengths     String[]
+  weaknesses    String[]
+  sessionId     String? // link to assessment session
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([studentId])
+  @@index([type])
+  @@index([sessionId])
+}
+
+// ============================================================
+// PART 3 — Phase 8: Document Domain
+// ============================================================
+
+model Document {
+  id            String         @id @default(uuid())
+  studentId     String
+  student       Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  type          DocumentType
+  status        DocumentStatus @default(PENDING)
+  fileName      String
+  filePath      String
+  fileSize      Int
+  mimeType      String
+  version       Int            @default(1)
+  description   String?
+  tags          String[]
+  extractedText String?
+  aiChecked     Boolean        @default(false)
+  aiResult      Json?
+  aiScore       Int?
+  reviewedBy    String?
+  reviewNotes   String?
+  verifiedAt    DateTime?
+  uploadedById  String?
+  uploadedBy    User?          @relation("DocumentUploader", fields: [uploadedById], references: [id])
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  deletedAt     DateTime?
+
+  chunks       DocumentChunk[]
+  comments     DocumentComment[]
+  versions     DocumentVersion[]
+  extractions  DocumentExtraction[]
+  analyses     DocumentAnalysis[]
+  appDocuments ApplicationDocument[]
+
+  @@index([studentId])
+  @@index([status])
+  @@index([type])
+}
+
+model DocumentVersion {
+  id           String   @id @default(uuid())
+  documentId   String
+  document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  version      Int
+  fileName     String
+  filePath     String
+  fileSize     Int
+  mimeType     String
+  uploadedById String?
+  uploadedBy   User?    @relation("DocumentVersionUploader", fields: [uploadedById], references: [id])
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  @@index([documentId])
+  @@index([version])
+}
+
+model DocumentComment {
+  id         String   @id @default(uuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  content    String
+  isInternal Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([documentId])
+}
+
+model DocumentExtraction {
+  id          String   @id @default(uuid())
+  documentId  String
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  engine      String // tesseract | azure | aws | pdf-parse
+  rawText     String
+  confidence  Float?
+  metadata    Json?
+  pageCount   Int?
+  processedAt DateTime @default(now())
+
+  @@index([documentId])
+}
+
+model DocumentAnalysis {
+  id          String   @id @default(uuid())
+  documentId  String
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  engine      String // ai | rule-based
+  result      Json
+  score       Int?
+  summary     String?
+  suggestions String[]
+  errors      String[]
+  missingInfo String[]
+  processedAt DateTime @default(now())
+
+  @@index([documentId])
+}
+
+// ============================================================
+// PART 3 — Phase 9: CRM Domain
+// ============================================================
+
+model Application {
+  id                 String            @id @default(uuid())
+  studentId          String
+  student            Student           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  universityId       String
+  university         University        @relation(fields: [universityId], references: [id])
+  courseId           String?
+  course             Course?           @relation(fields: [courseId], references: [id])
+  counselorId        String?
+  counselor          User?             @relation("ApplicationCounselor", fields: [counselorId], references: [id])
+  status             ApplicationStatus @default(DRAFT)
+  intake             String?
+  submittedAt        DateTime?
+  offerReceivedAt    DateTime?
+  offerDeadline      DateTime?
+  offerLetterFile    String?
+  visaStatus         String?
+  visaAppliedDate    DateTime?
+  visaApprovedDate   DateTime?
+  visaRejectedReason String?
+  tuitionPaid        Boolean           @default(false)
+  tuitionAmount      Float?
+  tuitionCurrency    String?
+  tuitionDeadline    DateTime?
+  departureDate      DateTime?
+  arrivalDate        DateTime?
+  notes              String?
+  leadSource         String?
+  priority           String? // HIGH | MEDIUM | LOW
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  deletedAt          DateTime?
+
+  activities Activity[]
+  tasks      Task[]
+  meetings   Meeting[]
+  calls      Call[]
+  followUps  FollowUp[]
+  documents  ApplicationDocument[]
+
+  @@index([studentId])
+  @@index([universityId])
+  @@index([status])
+  @@index([counselorId])
+}
+
+model ApplicationDocument {
+  id            String      @id @default(uuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  documentId    String
+  document      Document    @relation(fields: [documentId], references: [id])
+  type          String // OFFER_LETTER | VISA | TUITION | OTHER
+  uploadedAt    DateTime    @default(now())
+
+  @@index([applicationId])
+  @@index([documentId])
+}
+
+model Task {
+  id            String       @id @default(uuid())
+  title         String
+  description   String?
+  status        String       @default("PENDING") // PENDING | IN_PROGRESS | COMPLETED | CANCELLED
+  priority      String       @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
+  dueDate       DateTime?
+  completedAt   DateTime?
+  studentId     String?
+  student       Student?     @relation(fields: [studentId], references: [id])
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id])
+  assignedById  String
+  assignedBy    User         @relation("TaskAssigner", fields: [assignedById], references: [id])
+  assignedToId  String?
+  assignedTo    User?        @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  category      String? // DOCUMENT | APPLICATION | VISA | TUITION | FOLLOWUP | GENERAL
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  followUps FollowUp[]
+
+  @@index([studentId])
+  @@index([applicationId])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([dueDate])
+}
+
+model Meeting {
+  id            String       @id @default(uuid())
+  title         String
+  description   String?
+  meetingType   String       @default("COUNSELING") // COUNSELING | REVIEW | INTERVIEW | GENERAL
+  startTime     DateTime
+  endTime       DateTime?
+  location      String? // physical location or video link
+  isVirtual     Boolean      @default(false)
+  status        String       @default("SCHEDULED") // SCHEDULED | CONFIRMED | COMPLETED | CANCELLED
+  studentId     String
+  student       Student      @relation(fields: [studentId], references: [id])
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id])
+  organizerId   String
+  organizer     User         @relation(fields: [organizerId], references: [id])
+  notes         String?
+  outcome       String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([studentId])
+  @@index([applicationId])
+  @@index([organizerId])
+  @@index([startTime])
+}
+
+model Call {
+  id               String       @id @default(uuid())
+  studentId        String
+  student          Student      @relation(fields: [studentId], references: [id])
+  applicationId    String?
+  application      Application? @relation(fields: [applicationId], references: [id])
+  callerId         String
+  caller           User         @relation(fields: [callerId], references: [id])
+  callType         String       @default("OUTBOUND") // INBOUND | OUTBOUND | FOLLOWUP
+  duration         Int? // seconds
+  notes            String?
+  outcome          String?
+  followUpRequired Boolean      @default(false)
+  createdAt        DateTime     @default(now())
+
+  @@index([studentId])
+  @@index([applicationId])
+  @@index([callerId])
+}
+
+model FollowUp {
+  id            String       @id @default(uuid())
+  title         String
+  description   String?
+  dueDate       DateTime
+  completedAt   DateTime?
+  status        String       @default("PENDING") // PENDING | COMPLETED | CANCELLED
+  studentId     String?
+  student       Student?     @relation(fields: [studentId], references: [id])
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id])
+  taskId        String?
+  task          Task?        @relation(fields: [taskId], references: [id])
+  createdById   String
+  createdBy     User         @relation("FollowUpCreator", fields: [createdById], references: [id])
+  assignedToId  String?
+  assignedTo    User?        @relation("FollowUpAssignee", fields: [assignedToId], references: [id])
+  category      String? // CALL | DOCUMENT | VISA | TUITION | GENERAL
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([studentId])
+  @@index([applicationId])
+  @@index([dueDate])
+  @@index([status])
+}
+
+model Scholarship {
+  id                String      @id @default(uuid())
+  name              String
+  slug              String      @unique
+  description       String?
+  type              String? // MERIT | NEED_BASED | SPORTS | RESEARCH | GOVERNMENT | UNIVERSITY | EXTERNAL
+  amount            Float?
+  amountMax         Float?
+  currency          String?
+  eligibility       String?
+  coverage          String[] // TUITION, LIVING, TRAVEL, INSURANCE, BOOKS
+  applicationUrl    String?
+  deadline          DateTime?
+  intakeSeasons     String[] // FALL, SPRING, SUMMER, WINTER, ROLLING
+  academicLevels    String[] // UNDERGRADUATE, POSTGRADUATE, DOCTORAL, DIPLOMA
+  gpaRequirement    Float?
+  englishTest       String?
+  documentsRequired String[]
+  nationalities     String[]
+  isFeatured        Boolean     @default(false)
+  isActive          Boolean     @default(true)
+  countryId         String?
+  country           Country?    @relation(fields: [countryId], references: [id])
+  universityId      String?
+  university        University? @relation(fields: [universityId], references: [id])
+  courseId          String?
+  course            Course?     @relation(fields: [courseId], references: [id])
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  deletedAt         DateTime?
+
+  @@index([countryId])
+  @@index([universityId])
+}
+
+model Note {
+  id         String    @id @default(uuid())
+  content    String
+  authorId   String
+  author     User      @relation("NoteAuthor", fields: [authorId], references: [id])
+  assigneeId String?
+  assignee   User?     @relation("NoteAssignee", fields: [assigneeId], references: [id])
+  studentId  String
+  student    Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  isPinned   Boolean   @default(false)
+  category   String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  @@index([studentId])
+  @@index([authorId])
+  @@index([assigneeId])
+}
+
+model Activity {
+  id            String       @id @default(uuid())
+  type          String
+  description   String
+  studentId     String
+  student       Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id])
+  userId        String?
+  metadata      Json?
+  createdAt     DateTime     @default(now())
+
+  @@index([studentId])
+  @@index([applicationId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// PART 3 — Phase 11: Recommendation Domain
+// ============================================================
+
+model Recommendation {
+  id          String   @id @default(uuid())
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  type        String
+  title       String
+  description String?
+  score       Float?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([studentId])
+  @@index([type])
+}
+
+model UniversityRecommendation {
+  id              String                 @id @default(uuid())
+  studentId       String
+  student         Student                @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  universityId    String
+  university      University             @relation(fields: [universityId], references: [id])
+  category        RecommendationCategory @default(BEST_FIT)
+  confidenceScore Float?
+  reason          String?
+  matchDetails    Json?
+  isAccepted      Boolean                @default(false)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  @@unique([studentId, universityId, category])
+  @@index([studentId])
+  @@index([universityId])
+  @@index([category])
+}
+
+// ============================================================
+// PART 3 — Phase 10: AI / RAG Domain
+// ============================================================
+
+model AIConversation {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String?
+  status    String   @default("ACTIVE")
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages AIMessage[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+model AIMessage {
+  id             String         @id @default(uuid())
+  conversationId String
+  conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String // user | assistant | system
+  content        String
+  tokens         Int?
+  model          String?
+  metadata       Json?
+  createdAt      DateTime       @default(now())
+
+  @@index([conversationId])
+}
+
+model KnowledgeDocument {
+  id             String    @id @default(uuid())
+  title          String
+  content        String?
+  sourceType     String // UNIVERSITY | COURSE | CAREER | DOCUMENT | MANUAL
+  referenceId    String?
+  status         String    @default("DRAFT") // DRAFT | REVIEW | APPROVED | ARCHIVED
+  tags           String[]
+  metadata       Json?
+  version        Int       @default(1)
+  createdBy      String?
+  approvalStatus String? // PENDING | APPROVED | REJECTED
+  approvedBy     String?
+  approvedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  @@index([sourceType])
+  @@index([status])
+  @@index([tags])
+}
+
+model DocumentChunk {
+  id         String    @id @default(uuid())
+  documentId String?
+  document   Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  studentId  String
+  student    Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  content    String
+  embedding  Json?
+  chunkIndex Int       @default(0)
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+
+  @@index([documentId])
+  @@index([studentId])
+  @@index([chunkIndex])
+}
+
+// ============================================================
+// PART 3 — Phase 13: Notification Domain
+// ============================================================
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  studentId String?
+  student   Student?         @relation(fields: [studentId], references: [id])
+  type      NotificationType
+  title     String
+  message   String
+  read      Boolean          @default(false)
+  metadata  Json?
+  createdAt DateTime         @default(now())
+
+  @@index([userId])
+  @@index([studentId])
+  @@index([read])
+  @@index([createdAt])
+}
+
+model NotificationPreference {
+  id              String             @id @default(uuid())
+  userId          String
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email           Boolean            @default(true)
+  inApp           Boolean            @default(true)
+  push            Boolean            @default(false)
+  types           NotificationType[]
+  quietHoursStart String?
+  quietHoursEnd   String?
+  digestFrequency String? // INSTANT, DAILY, WEEKLY
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@unique([userId])
+}
+
+// ============================================================
+// PART 3 — Phase 12: Audit Domain
+// ============================================================
+
+model AuditLog {
+  id             String        @id @default(uuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  userId         String?
+  user           User?         @relation(fields: [userId], references: [id])
+  studentId      String?
+  student        Student?      @relation(fields: [studentId], references: [id])
+  action         String
+  entity         String
+  entityId       String?
+  oldValue       Json?
+  newValue       Json?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([action])
+  @@index([entity])
+  @@index([entityId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// PART 3 — Phase 14: Synchronization Domain
+// ============================================================
+
+model SyncJob {
+  id          String    @id @default(uuid())
+  type        String
+  source      String?
+  status      String    @default("PENDING")
+  metadata    Json?
+  startedAt   DateTime?
+  completedAt DateTime?
+  error       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  changes SyncChange[]
+}
+
+model SyncChange {
+  id         String    @id @default(uuid())
+  syncJobId  String
+  syncJob    SyncJob   @relation(fields: [syncJobId], references: [id], onDelete: Cascade)
+  entity     String
+  entityId   String?
+  action     String // CREATE | UPDATE | DELETE
+  oldValue   Json?
+  newValue   Json?
+  status     String    @default("PENDING") // PENDING | REVIEW | APPROVED | REJECTED | PUBLISHED
+  reviewedBy String?
+  reviewedAt DateTime?
+  notes      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([syncJobId])
+  @@index([status])
+  @@index([entity])
+}
+
+// ============================================================
+// System Configuration
+// ============================================================
+
+model AIEmbedding {
+  id         String   @id @default(uuid())
+  sourceType String // UNIVERSITY | COURSE | CAREER | COUNTRY | SCHOLARSHIP | VISA | DOCUMENT
+  sourceId   String?
+  content    String
+  embedding  Json? // float[] vector stored as JSON
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([sourceType])
+  @@index([sourceId])
+}
+
+model AIUsageLog {
+  id               String   @id @default(uuid())
+  userId           String?
+  feature          String // CHAT | EMBEDDING | SOP | RESUME | DOCUMENT | RECOMMENDATION | SEARCH
+  provider         String // openai | anthropic | fallback
+  model            String?
+  promptTokens     Int?
+  completionTokens Int?
+  totalTokens      Int?
+  durationMs       Int?
+  metadata         Json?
+  createdAt        DateTime @default(now())
+
+  @@index([userId])
+  @@index([feature])
+  @@index([createdAt])
+}
+
+model AIPromptTemplate {
+  id           String   @id @default(uuid())
+  key          String   @unique // e.g. "sop-research", "university-recommendation", "career-guidance"
+  name         String
+  category     String // CHATBOT | SOP | RESUME | RECOMMENDATION | DOCUMENT | ANALYSIS | COMPARISON
+  systemPrompt String
+  userPrompt   String?
+  variables    String[] // e.g. ["universityName", "courseName"]
+  temperature  Float    @default(0.3)
+  maxTokens    Int      @default(2048)
+  model        String?
+  version      Int      @default(1)
+  isDefault    Boolean  @default(false)
+  metadata     Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([category])
+}
+
+model Setting {
+  id    String @id @default(uuid())
+  key   String @unique
+  value Json
+}
+
+// ============================================================
+// Feature Access Management
+// ============================================================
+
+model Feature {
+  key         String   @id // e.g. "universities", "courses", "careers"
+  name        String   // e.g. "Universities"
+  description String?
+  module      String   // e.g. "STUDENT", "ADMIN"
+  isDefault   Boolean  @default(false) // enabled by default for all orgs
+  createdAt   DateTime @default(now())
+
+  organizationFeatures OrganizationFeature[]
+  studentAccess        StudentFeatureAccess[]
+}
+
+model OrganizationFeature {
+  id         String   @id @default(uuid())
+  orgId      String
+  featureKey String
+  feature    Feature  @relation(fields: [featureKey], references: [key])
+  enabled    Boolean  @default(true)
+  updatedAt  DateTime @updatedAt
+
+  @@unique([orgId, featureKey])
+  @@index([orgId])
+}
+
+model StudentFeatureAccess {
+  id         String   @id @default(uuid())
+  studentId  String
+  featureKey String
+  feature    Feature  @relation(fields: [featureKey], references: [key])
+  granted    Boolean  @default(false)
+  grantedBy  String?  // userId who granted access
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([studentId, featureKey])
+  @@index([studentId])
+}
