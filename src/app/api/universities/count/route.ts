@@ -1,13 +1,11 @@
 import { prisma } from "@/lib/prisma";
-import { success } from "@/lib/api-response";
-
-export const dynamic = "force-dynamic";
+import { NextResponse } from "next/server";
 
 export async function GET() {
   try {
     const count = await prisma.university.count({ where: { deletedAt: null } });
-    return success({ count });
+    return NextResponse.json({ success: true, data: { count } });
   } catch {
-    return success({ count: 0 });
+    return NextResponse.json({ success: false, error: "Failed to count" }, { status: 500 });
   }
 }
