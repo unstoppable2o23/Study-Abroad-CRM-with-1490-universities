@@ -1,0 +1,11 @@
+# Tasks
+- [x] Create JWT utility functions
+- [x] Create login API route
+- [x] Create register API route
+- [x] Create refresh token API route
+- [x] Create logout API route
+- [x] Create login page
+- [x] Create register page
+- [x] Create dashboard page
+- [x] Create middleware for auth
+- [ ] Test auth flow end-to-end
